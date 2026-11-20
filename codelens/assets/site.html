@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<title>CodeLens</title>
+<style>@@CSS@@</style>
+</head>
+<body>
+<header class="top" id="home-top"><span class="brand"><span class="mark" aria-hidden="true">⌗</span> CodeLens</span><span class="trail">源码学习引擎</span></header>
+<main id="overview">
+  <div class="catalog">
+    <div class="overline">项目总览</div><h1 id="project"></h1><p id="description" class="project-description"></p>
+    <div class="finder"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="4.75"/><path d="m12 12 4 4"/></svg><input id="search-files" type="search" placeholder="搜索文件或路径" aria-label="搜索文件" autocomplete="off"><kbd>Ctrl K</kbd></div>
+    <div class="tree-box"><div class="tree-head"><span>文件</span><span>作用</span></div><div id="tree"></div></div>
+    <p id="catalog-warning" class="hint" hidden></p>
+  </div>
+</main>
+<header class="top" id="work-top" hidden><button id="home" class="quiet">← 项目总览</button><button id="return" class="quiet" hidden>↶ 返回调用处</button><span class="separator"></span><span id="file-path" class="path"></span></header>
+<main id="explore" hidden>
+  <section class="pane source-pane" aria-label="源码">
+    <div class="bar"><h2>源码</h2><select id="scopes" aria-label="定位函数或类"></select><button class="quiet compact" id="code-find" title="源码搜索">⌕ <span>搜索</span></button><button class="quiet compact" id="fold" title="展开或折叠源码">折叠</button></div>
+    <div class="find-code" id="find-code" hidden><input type="search" id="search-code" aria-label="搜索源码" placeholder="输入源码关键词"><span id="match-count"></span><button type="button" class="quiet" id="match-prev" aria-label="上一个匹配">↑</button><button type="button" class="quiet" id="match-next" aria-label="下一个匹配">↓</button><button type="button" class="quiet" id="close-find" aria-label="关闭源码搜索">×</button></div>
+    <div id="source" tabindex="0" aria-label="完整源码"></div>
+  </section>
+  <section class="pane graph-pane" aria-label="交互式流程图">
+    <div class="bar graph-bar"><h2>执行流程</h2><span class="mode" title="代码未运行；分支和循环只做静态推演">静态推演</span><select id="path-mode" aria-label="着重探索的路径"><option value="all">全部流向</option></select><div class="zoom" aria-label="图形缩放"><button class="quiet icon" id="zoom-out" aria-label="缩小">−</button><button class="quiet icon" id="zoom-in" aria-label="放大">+</button><button class="quiet compact" id="fit" title="重新适配图形宽度">适配</button></div></div>
+    <div id="viewport" tabindex="0" aria-label="流程画布，可拖动，滚轮缩放"><div id="scene"><div id="drawing"><svg id="edges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg><div id="node-layer"></div></div></div><div id="graph-empty" class="empty" hidden></div><span id="gesture-hint" class="gesture-hint">拖动画布 · 滚轮缩放</span></div>
+    <div class="player" aria-label="流程播放"><button class="quiet icon" id="reset" aria-label="重新开始" title="重新开始">↺</button><button class="quiet" id="prev" aria-label="上一步" title="上一步">←</button><button class="play" id="play" aria-label="播放">播放</button><button class="quiet" id="next" aria-label="下一步" title="下一步">→</button><select id="speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select><span id="play-state" class="hint" aria-live="polite"></span></div>
+    <footer id="note" aria-live="polite"><span id="note-line"></span><div><strong id="note-title"></strong><p id="note-text"></p></div><div id="call-actions"></div></footer>
+  </section>
+</main>
+<noscript>CodeLens 需要启用 JavaScript，不需要联网。</noscript>
+<script id="model-data" type="application/json">@@DATA@@</script>
+<script>@@JS@@</script>
+</body>
+</html>

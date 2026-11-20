@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "project": "用 TypeScript 将一组分数整理成排行榜。",
+  "files": {
+    "src/main.ts": {
+      "sha256": "02823bf6cf3b4b3a3dbb5e101db7837c7a0f6c39e7b7adcd4cc588078074a3b8",
+      "summary": "过滤空标签，规范化分数并收集达标项。",
+      "key": true,
+      "scopes": {
+        "main": {
+          "steps": {
+            "6:2": {
+              "title": "初始化排行榜",
+              "summary": "创建空数组来存放达标的分数记录。"
+            },
+            "7:2": {
+              "title": "遍历分数记录",
+              "summary": "逐条读取 rows；每轮结束后继续处理下一条。"
+            },
+            "8:4": {
+              "title": "标签为空？",
+              "summary": "去掉首尾空白后，如果没有内容，就跳过该记录。"
+            },
+            "12:6": {
+              "title": "规范化分数",
+              "summary": "调用 score.ts 的 normalize，将有限数值约束到 0–100。"
+            },
+            "13:6": {
+              "title": "分数达标？",
+              "summary": "将规范化后的分数与 limit 比较。"
+            }
+          }
+        }
+      }
+    },
+    "src/score.ts": {
+      "sha256": "cee27b43fdab8b4682545c89a9f37e8fb6e3fcb1bd9c7fce421e311d7e9f6247",
+      "summary": "检查分数有效性，并将分数限制到 0–100。",
+      "key": true,
+      "scopes": {
+        "normalize": {
+          "steps": {
+            "8:2": {
+              "title": "分数不是有限数？",
+              "summary": "NaN 或无穷值会进入抛错分支。"
+            },
+            "11:2": {
+              "title": "返回区间内分数",
+              "summary": "将小于 0 或大于 100 的值限制到区间边界。"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodeLens"
+  short_description: "Explore Python and TypeScript source in an offline workbench"
+  default_prompt: "Use $codelens to build an interactive offline learning site for this Python or TypeScript project."

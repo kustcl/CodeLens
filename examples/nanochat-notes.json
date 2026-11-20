@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "reading": [
+    {
+      "path": "scripts/base_train.py",
+      "reason": "训练入口候选。先看模型、数据和优化器如何汇合到单步训练，再看梯度累积与参数更新。"
+    },
+    {
+      "path": "nanochat/gpt.py",
+      "reason": "从 GPT.forward 看 token → logits / loss；然后读 CausalSelfAttention.forward。"
+    },
+    {
+      "path": "nanochat/flash_attention.py",
+      "reason": "注意力实现与后端选择：不把运行环境相关的分派当成一个固定函数。"
+    },
+    {
+      "path": "nanochat/optim.py",
+      "reason": "查看训练脚本中的 optimizer.step 背后有哪些更新规则。"
+    },
+    {
+      "path": "nanochat/engine.py",
+      "reason": "与训练路径对比，查看推理生成与 KV cache。"
+    }
+  ],
+  "files": {
+    "nanochat/gpt.py": {
+      "sha256": "8cdedc2e418b9d4dc45884e07f59904fcdec066bb3d76664b2adf2d415f704e3",
+      "summary": "定义 GPT、注意力和前向传播。",
+      "scopes": {
+        "GPT.forward": {
+          "summary": "输入 token 索引；有 targets 就返回交叉熵，否则返回 logits。",
+          "steps": {
+            "460:8": {
+              "title": "读取批大小和序列长度",
+              "summary": "这里按二维 token 索引使用 idx，解包出 B、T；这是由源码表达的输入约束，不是一次运行记录。"
+            },
+            "468:8": {
+              "title": "切出对应位置的 RoPE 缓存",
+              "summary": "从 T0 开始取得长度为 T 的 cos、sin 切片。推理中 T0 由 KV cache 的当前位置决定，不一定从 0 开始。"
+            },
+            "471:8": {
+              "title": "查找 token 嵌入",
+              "summary": "假设输入 idx 为 (B, T)，按模型定义，嵌入将每个 token 索引映射到一个特征向量，得到 (B, T, n_embd)。紧接着转换计算 dtype 并归一化。"
+            },
+            "476:8": {
+              "title": "无 KV 缓存？",
+              "summary": "训练或整段输入可用相邻切片。缓存路径保留上次末尾的嵌入，并分别处理 prefill 与单 token decode。"
+            },
+            "499:8": {
+              "title": "遍历 Transformer 层",
+              "summary": "每层先混合残差，按条件取该层的 value embedding，再把 x、RoPE、窗口和缓存交给 Block。这里看到的是源码调用位置，不是对 block 对象的运行时解析。"
+            },
+            "512:8": {
+              "title": "投影到词表",
+              "summary": "lm_head 先给出 padded_vocab_size 个 logits；随后按实际词表截断，转为 FP32 并用 tanh 压限。"
+            },
+            "520:12": {
+              "title": "计算交叉熵",
+              "summary": "logits 被展平为 (B×T, vocab_size)，targets 展平为 (B×T)。源码以 -1 为忽略标签；归约方式由 loss_reduction 指定。",
+              "detail": "词表维保留为分类维度，批次和时间维合并为样本维。这一步直接返回损失；只有调用方（如 base_train）决定何时执行 backward。推理分支不传 targets，会直接返回 logits。"
+            },
+            "517:8": {
+              "title": "是否提供训练标签？"
+            }
+          },
+          "groups": [
+            {
+              "first": "463:8",
+              "last": "468:8",
+              "title": "检查并切出 RoPE 缓存",
+              "summary": "验证设备、精度和长度；随后截取与当前位置对应的 cos / sin。"
+            },
+            {
+              "first": "471:8",
+              "last": "473:8",
+              "title": "嵌入并归一化 token",
+              "summary": "将索引映射为特征向量，再转计算精度并归一化。"
+            },
+            {
+              "first": "478:12",
+              "last": "480:12",
+              "title": "混合相邻 token",
+              "summary": "整段输入可用相邻切片，直接混合前一个 token 的嵌入。"
+            },
+            {
+              "first": "483:12",
+              "last": "484:12",
+              "title": "交换缓存中的前一嵌入",
+              "summary": "读出上次保存的向量，并记录本次输入的末尾向量。"
+            },
+            {
+              "first": "495:8",
+              "last": "498:8",
+              "title": "准备层间残差",
+              "summary": "保留初始嵌入，并设置中间层残差的记录位置。"
+            },
+            {
+              "first": "500:12",
+              "last": "502:12",
+              "title": "运行一层 Transformer",
+              "summary": "混合残差后调用当前 Block，按条件传入 value embedding。"
+            },
+            {
+              "first": "511:8",
+              "last": "515:8",
+              "title": "投影并限制 logits",
+              "summary": "投影到词表，移除填充位置，然后转成 FP32 并压限。"
+            }
+          ]
+        },
+        "CausalSelfAttention.forward": {
+          "summary": "构造 Q/K/V，应用 RoPE 和归一化，然后按 KV cache 是否存在选择注意力入口。",
+          "steps": {
+            "89:8": {
+              "title": "投影 query 并拆为多头",
+              "summary": "query 使用 n_head，形状通过 view 约束为 (B, T, n_head, head_dim)；紧接着的 K/V 使用 n_kv_head。"
+            },
+            "101:8": {
+              "title": "对 Q 与 K 应用位置旋转",
+              "summary": "两次调用同一局部定义，可以从调用列表跳到 apply_rotary_emb；此语句没有对 V 做旋转。"
+            },
+            "110:12": {
+              "title": "不读写 KV cache 的因果注意力路径",
+              "summary": "传入 Q/K/V、causal=True 和窗口参数。flash_attn 是源码导入的对象；属性调用的运行时后端未静态判定。"
+            },
+            "114:12": {
+              "title": "带 KV cache 的注意力路径",
+              "summary": "沿有缓存的分支传入现有 K/V 缓存和新 K/V；阅读 flash_attention.py 可继续核对后端选择。"
+            }
+          }
+        }
+      },
+      "focus": {
+        "scope": "GPT.forward"
+      },
+      "key": true
+    },
+    "scripts/base_train.py": {
+      "sha256": "87395b8078491d5088e7e8100866162b494638097215759b46d8ceb5d2f0fdcc",
+      "summary": "预训练 GPT，执行梯度累积并保存检查点。",
+      "scopes": {
+        "(module)": {
+          "steps": {
+            "426:12": {
+              "title": "跳到验证集 BPB 计算",
+              "summary": "训练循环中的验证分支调用 evaluate_bpb；这是可定位到 nanochat/loss_eval.py 定义的项目内导入。"
+            },
+            "510:4": {
+              "title": "遍历微批以累积梯度",
+              "summary": "每个微批都计算损失，按 grad_accum_steps 归一化后分别向后传播。更新优化器发生在循环之外。"
+            },
+            "511:8": {
+              "title": "从输入 x 和标签 y 求训练损失",
+              "summary": "这里只能静态定位 model(x, y) 的调用位置。相关模型逻辑可对照 GPT.forward 的 targets 分支，不能把它标为确定的运行时目标。"
+            },
+            "515:12": {
+              "title": "在启用 scaler 时缩放损失再反向传播",
+              "summary": "与 else 下的直接 backward 二选一；在优化器更新前另有 unscale 和 scaler.step。"
+            },
+            "517:12": {
+              "title": "未启用 scaler：直接反向传播",
+              "summary": "本分支对已归一化的 loss 调用 backward；不是所有运行都经过此分支。"
+            },
+            "539:8": {
+              "title": "未启用 scaler：执行 optimizer.step",
+              "summary": "梯度累积结束后更新参数状态；下面的 zero_grad 用于下一轮。不应把动态 optimizer 实例标成固定类型。"
+            },
+            "416:0": {
+              "title": "运行训练循环",
+              "summary": "每轮可先评估、采样和保存；到最后一步时退出，否则继续更新模型。"
+            }
+          }
+        }
+      },
+      "focus": {
+        "scope": "(module)",
+        "node": "416:0",
+        "label": "训练循环"
+      },
+      "key": true
+    },
+    "nanochat/checkpoint_manager.py": {
+      "sha256": "aa63399ddaf2a0412dc099287bf0dc879f9cb0cce00f861db50eeec58746f3ba",
+      "summary": "保存、恢复和构建模型检查点。"
+    },
+    "nanochat/common.py": {
+      "sha256": "b843db6e769db18d3364e42cb3742a9537a3d4cf43e5f098293babc7ddeb44bf",
+      "summary": "提供日志、设备检测和分布式初始化。"
+    },
+    "nanochat/core_eval.py": {
+      "sha256": "9303997ff17fa48ad5e5730f33b7e79a687cc2a1fdad928666bb63dc3514c51d",
+      "summary": "组织并计算 CORE 基准指标。"
+    },
+    "nanochat/dataloader.py": {
+      "sha256": "5cc72d7207931f112d685ba8e04c112e1a4ab7756dbbb29b95bdb4908a21864d",
+      "summary": "将预训练数据分词、打包并按进程分片。"
+    },
+    "nanochat/dataset.py": {
+      "sha256": "3ec2ad5987875e3d7f3ec72f08d78089fe8a3b20090448b798c21c4efb93d18a",
+      "summary": "下载 Parquet 分片并批量读取预训练文档。",
+      "focus": {
+        "scope": "download_single_file"
+      },
+      "key": true,
+      "scopes": {
+        "download_single_file": {
+          "steps": {
+            "100:4": {
+              "title": "限制尝试次数",
+              "summary": "循环逐次尝试下载；成功时返回，捕获下载错误后按条件等待并重试。"
+            }
+          }
+        }
+      }
+    },
+    "nanochat/engine.py": {
+      "sha256": "76636fc24228e72afdafe4747ff8e52a6cc60a5ec61c97205061f3bfed0a86fd",
+      "summary": "用 KV cache 批量生成 token 并处理计算器调用。",
+      "focus": {
+        "scope": "Engine.generate"
+      },
+      "key": true
+    },
+    "nanochat/execution.py": {
+      "sha256": "122ce1457100a5cb20fbe9666a57006df3b0fe78c014240d2f87c35ccade2c1a",
+      "summary": "在隔离子进程中执行用于评估的代码。"
+    },
+    "nanochat/flash_attention.py": {
+      "sha256": "a10b0b10ad91893fcf9c9b19c96bd3468a2721cf156dcdbeeeecf05f97f22c2f",
+      "summary": "在 Flash Attention 和 PyTorch SDPA 间选择注意力实现。"
+    },
+    "nanochat/fp8.py": {
+      "sha256": "fb56d323639a315393b04cecd3469dc129e8c975638cfc7ced8067f647b868b6",
+      "summary": "提供用于训练的 FP8 线性层与数值转换。"
+    },
+    "nanochat/loss_eval.py": {
+      "sha256": "00faad1e0ae8912022f79ee4bf583c4f9b4c058e4523c5674144648c49229fd6",
+      "summary": "计算验证集的 bits per byte（BPB）。",
+      "focus": {
+        "scope": "evaluate_bpb"
+      },
+      "key": true
+    },
+    "nanochat/optim.py": {
+      "sha256": "7c9b714c6f76e3a9d50fc530044b2767d0cd89391237e609548f1cd730afed8f",
+      "summary": "实现混合 Muon / AdamW 优化器。"
+    },
+    "nanochat/tokenizer.py": {
+      "sha256": "e6f12cb88fead3e6d0d45a7dd2af4192280712d92bfde83e2399cc4b3a0860fb",
+      "summary": "训练和加载 BPE 分词器。"
+    },
+    "nanochat/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summary": "声明 nanochat Python 包。"
+    },
+    "dev/repackage_data_reference.py": {
+      "sha256": "f898053eb68fe2dbcfe8a1e6ca905aebe9d17e374f7b72a2aca4c4058b6f0726",
+      "summary": "将原始数据重新打包成 Parquet 分片。"
+    },
+    "scripts/base_eval.py": {
+      "sha256": "644083a99ded710f677b25168ca76fd0416dc7ef3890d346a72f76a20bb522fe",
+      "summary": "评估基础模型的生成、BPB 和 CORE 指标。"
+    },
+    "scripts/chat_cli.py": {
+      "sha256": "333a27c74f93d278f3e5588d92def7d5d5fa03065f5e2f0e44e2b36361aea9df",
+      "summary": "在终端与对话模型交互。"
+    },
+    "scripts/chat_eval.py": {
+      "sha256": "394d8d5ab1e8a9bbe08fec5cd3a03fffec0cdf8c610a29a947a2ab801f488927",
+      "summary": "运行对话模型的生成和选择题评估。"
+    },
+    "scripts/chat_rl.py": {
+      "sha256": "9aeaaedd9ec879163dec0af80036ff5643a1af0d3e90f5d3a1d36c2c37bc0594",
+      "summary": "在 GSM8K 上用 GRPO 微调对话模型。"
+    },
+    "scripts/chat_sft.py": {
+      "sha256": "325ed7768eb3ab4ce8be5f147b43dac98745c4b1c697a918c0350139328329cc",
+      "summary": "用对话任务进行监督微调。"
+    },
+    "scripts/infer_bench.py": {
+      "sha256": "d500905027f5f5633c009e97464166fe7d5a5880e9b4f8d3100ef461ca22f46c",
+      "summary": "测量推理延迟、吞吐和内存。"
+    },
+    "scripts/tok_eval.py": {
+      "sha256": "9c8bee7d6aa7609102368c387df3114441d2ae9ca9ba68c2b4224d7a858c0ad4",
+      "summary": "比较分词器的文本压缩率。"
+    },
+    "scripts/tok_train.py": {
+      "sha256": "93237def990ddd96c9698bcc980881900e982dc8fc30dff913b132302b967aea",
+      "summary": "从文档流训练 BPE 分词器。"
+    },
+    "tasks/arc.py": {
+      "sha256": "f00642888b36ddff8524603f63d417cd39fc36c3c206922cd676df51c10f1b19",
+      "summary": "加载 ARC 科学选择题。"
+    },
+    "tasks/common.py": {
+      "sha256": "cb2e997fe151acd2b6f026caa32b7dc7a9779c48fa2a2886d33ac7e21b16ff23",
+      "summary": "定义任务接口并组合多个数据集。"
+    },
+    "tasks/gsm8k.py": {
+      "sha256": "b22e38691173c8265c1bd24f693b6eb31572fc466f5235352b0213a4d7f26fd1",
+      "summary": "加载数学题并提取答案。"
+    },
+    "tasks/humaneval.py": {
+      "sha256": "2ee62f4da86d6c2e9aea4b41cee1969a7da97036fd0e5d0152af600825dfd613",
+      "summary": "从模型回复提取程序并用于 HumanEval 评估。"
+    },
+    "tasks/mmlu.py": {
+      "sha256": "0b00ada4ad4bc7675f6e36a1e8770b19ae17c12daedbf7c88965228902421a66",
+      "summary": "加载 MMLU 多学科选择题。"
+    },
+    "tasks/smoltalk.py": {
+      "sha256": "0fdfc25dd36f74021cdaf4634dfddb1c77f3c01bde7c7ad316fad7a8ab7ee30a",
+      "summary": "加载并格式化 SmolTalk 对话。"
+    },
+    "tests/test_attention_fallback.py": {
+      "sha256": "b64612c21c97c1169d8bc94f6be40e96f84e749e5b5d9d475e6892f09b1eb24b",
+      "summary": "比较不同注意力后端的结果。"
+    },
+    "tests/test_engine.py": {
+      "sha256": "00310f9f3e7337ce390c9ae0bec190d2dc2236732787a7648a0e9b410444e525",
+      "summary": "验证 KV cache 和自回归采样。"
+    },
+    "tests/test_execution.py": {
+      "sha256": "cfd25c22e34b787eb04c308549aa19b88d633067843aafa8f8e60871da7ba0e4",
+      "summary": "验证评估执行器的错误与超时处理。"
+    },
+    "tests/test_optim.py": {
+      "sha256": "881c135ad8f0603f588750fdc521503e407f50918b3a59a6ea81188cacd2ad03",
+      "summary": "验证混合优化器的更新行为。"
+    },
+    "tests/test_tasks.py": {
+      "sha256": "4bdf67b0d13c06d5c02d671d265c2de3b5899f751f13e9b2ee7195169ea6ebcc",
+      "summary": "验证任务切片、混合和序列组合。"
+    },
+    "tests/test_tokenizer.py": {
+      "sha256": "761c29ec91b8dc1ff11b62681388233587e15566dcc2cfc67b8718135bdce571",
+      "summary": "验证 BPE 编解码与特殊 token。"
+    }
+  },
+  "project": "从分词、预训练到对话推理的轻量级 GPT 项目。",
+  "catalog": {
+    "dev": "开发笔记与模型缩放实验",
+    "nanochat": "模型、数据、优化器与推理实现",
+    "scripts": "训练、评估和对话入口",
+    "runs": "运行配方与实验脚本",
+    "tasks": "训练和评估使用的数据任务",
+    "tests": "核心模块的回归测试",
+    "dev/estimate_gpt3_core.ipynb": "估算 GPT-3 的 CORE 指标",
+    "dev/LEADERBOARD.md": "记录 speedrun 排行榜",
+    "dev/LOG.md": "记录模型和实验变更",
+    "dev/nanochat.png": "项目插图",
+    "dev/scaling_analysis.ipynb": "分析训练计算量和模型缩放",
+    "dev/scaling_laws_jan26.png": "缩放实验结果图",
+    "runs/miniseries.sh": "运行一组不同规模的模型实验",
+    "runs/runcpu.sh": "在 CPU 上运行训练配方",
+    "runs/scaling_laws.sh": "运行模型缩放实验",
+    "runs/speedrun.sh": "串联训练、评估和对话步骤",
+    "uv.lock": "锁定 uv 依赖版本",
+    "手打学习路线.md": "本地源码学习路线"
+  }
+}
