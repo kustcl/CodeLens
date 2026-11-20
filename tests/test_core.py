@@ -12,7 +12,7 @@ BASE = Path(__file__).resolve().parents[1]
 SCRIPT = BASE / 'codelens' / 'scripts' / 'codelens.py'
 sys.path.insert(0, str(SCRIPT.parent))
 from analyzer import MODULE, Project, flatten, split_source
-from codelens import inspect, load_notes, render
+from codelens import inspect, load_notes, reached_through_link, render
 
 
 def payload(html):
@@ -169,6 +169,26 @@ f = lambda: 5
         subprocess.run(command, capture_output=True, check=True)
         self.assertEqual(payload(html.read_text(encoding='utf-8')), json.loads(data.read_text(encoding='utf-8')))
         self.assertNotIn('out/index.html', {x['path'] for x in payload(html.read_text(encoding='utf-8'))['tree']})
+
+    def test_output_guard_uses_real_links_not_name_expansion(self):
+        # Ordinary directories are writable even when their text form differs from
+        # the resolved path (Windows 8.3 short names such as C:\Users\RUNNER~1,
+        # or a not-yet-created output folder).
+        self.assertFalse(reached_through_link(Path(os.path.abspath(self.root)) / 'out' / 'index.html'))
+        target, alias = self.root / 'real-out', self.root / 'out-alias'
+        target.mkdir()
+        if os.name == 'nt':
+            made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(alias), str(target)], capture_output=True)
+        else:
+            made = subprocess.run([sys.executable, '-c', 'import os,sys; os.symlink(sys.argv[1], sys.argv[2], target_is_directory=True)', str(target), str(alias)], capture_output=True)
+        if made.returncode != 0:
+            self.skipTest('symlinks and junctions are unavailable here')
+        self.assertTrue(reached_through_link(alias / 'index.html'))
+        command = [sys.executable, '-B', str(SCRIPT), 'build', str(self.root), '--out', str(alias / 'index.html')]
+        done = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('not reached through a symlink or junction', done.stderr)
+        self.assertFalse((target / 'index.html').exists())
 
     def test_packaged_installations_and_end_to_end_cli(self):
         for agent, folder in [('codex', '.agents'), ('claude', '.claude'), ('deepseek', '.dsh')]:

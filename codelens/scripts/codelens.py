@@ -136,9 +136,25 @@ def render(project):
     return re.sub(r'@@(CSS|JS|DATA)@@', lambda m: replace[m[1]], (ASSETS / 'site.html').read_text(encoding='utf-8-sig'))
 
 
+def reached_through_link(path):
+    """True when an existing component of path is a symlink or junction.
+
+    Checks each component directly instead of comparing Path.resolve() to the
+    input: on Windows resolve() also expands 8.3 short names (C:\\Users\\RUNNER~1),
+    which would reject perfectly ordinary output directories such as %TEMP%.
+    """
+    for part in reversed([path, *path.parents]):
+        try:
+            os.readlink(part)
+        except OSError:
+            continue
+        return True
+    return False
+
+
 def write_output(path, content, force, suffix):
     path = Path(os.path.abspath(path))
-    if path.parent.resolve() != path.parent:
+    if reached_through_link(path):
         raise ValueError('Choose an output directory that is not reached through a symlink or junction')
     if path.suffix.lower() != suffix:
         raise ValueError(f'Output must have a {suffix} extension')
